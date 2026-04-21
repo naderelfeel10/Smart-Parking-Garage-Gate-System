@@ -1,0 +1,23 @@
+--cpu=Cortex-M4.fp.sp
+".\objects\basic_io.o"
+".\objects\consoleprint.o"
+".\objects\retarget.o"
+".\objects\main.o"
+".\objects\clib_os.o"
+".\objects\cmsis_os2.o"
+".\objects\os_systick.o"
+".\objects\retarget_io.o"
+".\objects\startup_tm4c123.o"
+".\objects\system_tm4c123.o"
+".\objects\freertos_evr.o"
+".\objects\event_groups.o"
+".\objects\list.o"
+".\objects\port.o"
+".\objects\heap_4.o"
+".\objects\queue.o"
+".\objects\tasks.o"
+".\objects\timers.o"
+--strict --scatter ".\Objects\Assignment-07.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\Listings\Assignment-07.map" -o .\Objects\Assignment-07.axf
