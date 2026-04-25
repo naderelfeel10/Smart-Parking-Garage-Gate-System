@@ -10,14 +10,14 @@
 /*
  * Smart Parking Garage Gate System
  *
- * Button connections, active low:
- * PF4 = Driver OPEN
- * PE0 = Driver CLOSE
- * PE1 = Security OPEN
- * PB0 = Security CLOSE
- * PB1 = Open limit
- * PD0 = Closed limit
- * PD1 = Obstacle
+ * Button connections using main(4) hardware wiring:
+ * PF4 = Driver OPEN      pull-up,   active-low  (pressed = 0)
+ * PE0 = Driver CLOSE     pull-down, active-high (pressed = 1)
+ * PE1 = Security OPEN    pull-down, active-high (pressed = 1)
+ * PB0 = Security CLOSE   pull-down, active-high (pressed = 1)
+ * PB1 = Open limit       pull-down, active-high (pressed = 1)
+ * PD0 = Closed limit     pull-down, active-high (pressed = 1)
+ * PD1 = Obstacle         pull-down, active-high (pressed = 1)
  *
  * LEDs:
  * PF3 = Green LED, gate opening
@@ -31,6 +31,13 @@
 #define BTN_PB1                (1U << 1)
 #define BTN_PD0                (1U << 0)
 #define BTN_PD1                (1U << 1)
+
+/* Clock-gate masks for Ports B, D, E, F */
+#define RCGCGPIO_B             (1U << 1)
+#define RCGCGPIO_D             (1U << 3)
+#define RCGCGPIO_E             (1U << 4)
+#define RCGCGPIO_F             (1U << 5)
+#define RCGCGPIO_USED          (RCGCGPIO_B | RCGCGPIO_D | RCGCGPIO_E | RCGCGPIO_F)
 
 #define DRIVER_OPEN_MASK       0x01
 #define DRIVER_CLOSE_MASK      0x02
@@ -104,6 +111,7 @@ static void vStatusTask(void *pvParameters);
 
 static void GPIO_Init(void);
 static uint8_t readButtons(void);
+static void LED_Set(uint32_t ledMask);
 static ButtonEvents getPanelEvent(uint8_t buttons);
 static bool isMoveButton(ButtonEvents event);
 static bool isOpenButton(ButtonEvents event);
@@ -154,74 +162,87 @@ int main(void)
 
 static void GPIO_Init(void)
 {
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R1;  /* Port B clock */
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R3;  /* Port D clock */
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R4;  /* Port E clock */
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R5;  /* Port F clock */
-
-    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R1) == 0) {
-    }
-    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R3) == 0) {
-    }
-    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R4) == 0) {
-    }
-    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R5) == 0) {
+    /* Enable clocks for ports B, D, E, F and wait until all are ready. */
+    SYSCTL_RCGCGPIO_R |= RCGCGPIO_USED;
+    while ((SYSCTL_PRGPIO_R & RCGCGPIO_USED) != RCGCGPIO_USED) {
     }
 
-    GPIO_PORTB_DIR_R &= ~(BTN_PB0 | BTN_PB1);
-    GPIO_PORTB_DEN_R |= (BTN_PB0 | BTN_PB1);
-    GPIO_PORTB_PUR_R |= (BTN_PB0 | BTN_PB1);
-    GPIO_PORTB_AFSEL_R &= ~(BTN_PB0 | BTN_PB1);
+    /* ---------- Port B: PB0/PB1 inputs, pull-down, active-high ---------- */
     GPIO_PORTB_AMSEL_R &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_PCTL_R  &= ~0x000000FFU;
+    GPIO_PORTB_AFSEL_R &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_DIR_R   &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_PUR_R   &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_PDR_R   |=  (BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_DEN_R   |=  (BTN_PB0 | BTN_PB1);
 
-    GPIO_PORTD_DIR_R &= ~(BTN_PD0 | BTN_PD1);
-    GPIO_PORTD_DEN_R |= (BTN_PD0 | BTN_PD1);
-    GPIO_PORTD_PUR_R |= (BTN_PD0 | BTN_PD1);
-    GPIO_PORTD_AFSEL_R &= ~(BTN_PD0 | BTN_PD1);
+    /* ---------- Port D: PD0/PD1 inputs, pull-down, active-high ---------- */
     GPIO_PORTD_AMSEL_R &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_PCTL_R  &= ~0x000000FFU;
+    GPIO_PORTD_AFSEL_R &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_DIR_R   &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_PUR_R   &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_PDR_R   |=  (BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_DEN_R   |=  (BTN_PD0 | BTN_PD1);
 
-    GPIO_PORTE_DIR_R &= ~(BTN_PE0 | BTN_PE1);
-    GPIO_PORTE_DEN_R |= (BTN_PE0 | BTN_PE1);
-    GPIO_PORTE_PUR_R |= (BTN_PE0 | BTN_PE1);
-    GPIO_PORTE_AFSEL_R &= ~(BTN_PE0 | BTN_PE1);
+    /* ---------- Port E: PE0/PE1 inputs, pull-down, active-high ---------- */
     GPIO_PORTE_AMSEL_R &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_PCTL_R  &= ~0x000000FFU;
+    GPIO_PORTE_AFSEL_R &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_DIR_R   &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_PUR_R   &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_PDR_R   |=  (BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_DEN_R   |=  (BTN_PE0 | BTN_PE1);
 
-    GPIO_PORTF_DIR_R |= BOTH_LEDS_MASK;
-    GPIO_PORTF_DIR_R &= ~BTN_PF4;
-    GPIO_PORTF_DEN_R |= (BOTH_LEDS_MASK | BTN_PF4);
-    GPIO_PORTF_PUR_R |= BTN_PF4;
-    GPIO_PORTF_AFSEL_R &= ~(BOTH_LEDS_MASK | BTN_PF4);
+    /* ---------- Port F: PF1/PF3 LEDs and PF4 input, pull-up, active-low ---------- */
     GPIO_PORTF_AMSEL_R &= ~(BOTH_LEDS_MASK | BTN_PF4);
-    GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
+    GPIO_PORTF_PCTL_R  &= ~0x000FFFF0U;   /* PF1..PF4 as GPIO */
+    GPIO_PORTF_AFSEL_R &= ~(BOTH_LEDS_MASK | BTN_PF4);
+
+    GPIO_PORTF_DIR_R   |=  BOTH_LEDS_MASK;
+    GPIO_PORTF_DIR_R   &= ~BTN_PF4;
+
+    GPIO_PORTF_PDR_R   &= ~BTN_PF4;
+    GPIO_PORTF_PUR_R   |=  BTN_PF4;
+    GPIO_PORTF_DEN_R   |=  (BOTH_LEDS_MASK | BTN_PF4);
+
+    LED_Set(0);
 }
 
 static uint8_t readButtons(void)
 {
     uint8_t buttons = 0;
 
+    /* PF4 is pull-up active-low. All other project buttons use main(4)
+       wiring: pull-down active-high. */
     if ((GPIO_PORTF_DATA_R & BTN_PF4) == 0) {
         buttons |= DRIVER_OPEN_MASK;
     }
-    if ((GPIO_PORTE_DATA_R & BTN_PE0) == 0) {
+    if ((GPIO_PORTE_DATA_R & BTN_PE0) != 0) {
         buttons |= DRIVER_CLOSE_MASK;
     }
-    if ((GPIO_PORTE_DATA_R & BTN_PE1) == 0) {
+    if ((GPIO_PORTE_DATA_R & BTN_PE1) != 0) {
         buttons |= SECURITY_OPEN_MASK;
     }
-    if ((GPIO_PORTB_DATA_R & BTN_PB0) == 0) {
+    if ((GPIO_PORTB_DATA_R & BTN_PB0) != 0) {
         buttons |= SECURITY_CLOSE_MASK;
     }
-    if ((GPIO_PORTB_DATA_R & BTN_PB1) == 0) {
+    if ((GPIO_PORTB_DATA_R & BTN_PB1) != 0) {
         buttons |= OPEN_LIMIT_MASK;
     }
-    if ((GPIO_PORTD_DATA_R & BTN_PD0) == 0) {
+    if ((GPIO_PORTD_DATA_R & BTN_PD0) != 0) {
         buttons |= CLOSED_LIMIT_MASK;
     }
-    if ((GPIO_PORTD_DATA_R & BTN_PD1) == 0) {
+    if ((GPIO_PORTD_DATA_R & BTN_PD1) != 0) {
         buttons |= OBSTACLE_MASK;
     }
 
     return buttons;
+}
+
+static void LED_Set(uint32_t ledMask)
+{
+    GPIO_PORTF_DATA_R = (GPIO_PORTF_DATA_R & ~BOTH_LEDS_MASK) | (ledMask & BOTH_LEDS_MASK);
 }
 
 static ButtonEvents getPanelEvent(uint8_t buttons)
@@ -534,18 +555,16 @@ static void vLEDCTRLTask(void *pvParameters)
 
         switch (ledEvent) {
             case GREEN_LED:
-                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
-                GPIO_PORTF_DATA_R |= GREEN_LED_MASK;
+                LED_Set(GREEN_LED_MASK);
                 break;
 
             case RED_LED:
-                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
-                GPIO_PORTF_DATA_R |= RED_LED_MASK;
+                LED_Set(RED_LED_MASK);
                 break;
 
             case OFF_LED:
             default:
-                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
+                LED_Set(0);
                 break;
         }
     }
