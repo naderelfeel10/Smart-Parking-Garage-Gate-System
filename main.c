@@ -114,8 +114,7 @@ static uint8_t readButtons(void);
 static void LED_Set(uint32_t ledMask);
 static ButtonEvents getPanelEvent(uint8_t buttons);
 static bool isMoveButton(ButtonEvents event);
-static bool isOpenButton(ButtonEvents event);
-static bool isCloseButton(ButtonEvents event);
+
 static void sendButtonEvent(ButtonEvents event, BaseType_t urgent);
 static void setState(states newState);
 static states getState(void);
@@ -213,8 +212,7 @@ static uint8_t readButtons(void)
 {
     uint8_t buttons = 0;
 
-    /* PF4 is pull-up active-low. All other project buttons use main(4)
-       wiring: pull-down active-high. */
+    
     if ((GPIO_PORTF_DATA_R & BTN_PF4) == 0) {
         buttons |= DRIVER_OPEN_MASK;
     }
@@ -277,15 +275,6 @@ static bool isMoveButton(ButtonEvents event)
            event == BTN_SECURITY_OPEN || event == BTN_SECURITY_CLOSE;
 }
 
-static bool isOpenButton(ButtonEvents event)
-{
-    return event == BTN_DRIVER_OPEN || event == BTN_SECURITY_OPEN;
-}
-
-static bool isCloseButton(ButtonEvents event)
-{
-    return event == BTN_DRIVER_CLOSE || event == BTN_SECURITY_CLOSE;
-}
 
 static void sendButtonEvent(ButtonEvents event, BaseType_t urgent)
 {
