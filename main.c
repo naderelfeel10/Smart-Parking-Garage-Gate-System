@@ -10,39 +10,45 @@
 /*
  * Smart Parking Garage Gate System
  *
- * Buttons are active low and connected to Port B:
- * PB0: Driver OPEN
- * PB1: Driver CLOSE
- * PB2: Security OPEN
- * PB3: Security CLOSE
- * PB4: Open limit
- * PB5: Closed limit
- * PB6: Obstacle
+ * Button connections, active low:
+ * PB0 = Driver OPEN
+ * PB1 = Driver CLOSE
+ * PB2 = Security OPEN
+ * PB3 = Security CLOSE
+ * PB4 = Open limit
+ * PB5 = Closed limit
+ * PB6 = Obstacle
  *
  * LEDs:
- * PF3: Green LED for opening
- * PF1: Red LED for closing
+ * PF3 = Green LED, gate opening
+ * PF1 = Red LED, gate closing
  */
 
-#define DRIVER_OPEN     0x01
-#define DRIVER_CLOSE    0x02
-#define SECURITY_OPEN   0x04
-#define SECURITY_CLOSE  0x08
-#define OPEN_LIMIT      0x10
-#define CLOSED_LIMIT    0x20
-#define OBSTACLE        0x40
+#define DRIVER_OPEN_MASK       0x01
+#define DRIVER_CLOSE_MASK      0x02
+#define SECURITY_OPEN_MASK     0x04
+#define SECURITY_CLOSE_MASK    0x08
+#define OPEN_LIMIT_MASK        0x10
+#define CLOSED_LIMIT_MASK      0x20
+#define OBSTACLE_MASK          0x40
 
-#define PANEL_BUTTONS   (DRIVER_OPEN | DRIVER_CLOSE | SECURITY_OPEN | SECURITY_CLOSE)
-#define ALL_BUTTONS     (PANEL_BUTTONS | OPEN_LIMIT | CLOSED_LIMIT | OBSTACLE)
+#define PANEL_BUTTONS_MASK     (DRIVER_OPEN_MASK | DRIVER_CLOSE_MASK | SECURITY_OPEN_MASK | SECURITY_CLOSE_MASK)
+#define ALL_BUTTONS_MASK       (PANEL_BUTTONS_MASK | OPEN_LIMIT_MASK | CLOSED_LIMIT_MASK | OBSTACLE_MASK)
 
-#define RED_LED         0x02
-#define GREEN_LED       0x08
-#define BOTH_LEDS       (RED_LED | GREEN_LED)
+#define RED_LED_MASK           0x02
+#define GREEN_LED_MASK         0x08
+#define BOTH_LEDS_MASK         (RED_LED_MASK | GREEN_LED_MASK)
 
-#define DEBOUNCE_COUNT  3
-#define INPUT_DELAY_MS  20
-#define HOLD_TIME_MS    300
-#define REVERSE_TIME_MS 500
+#define DEBOUNCE_COUNT         3
+#define INPUT_DELAY_MS         20
+#define HOLD_TIME_MS           300
+#define REVERSE_TIME_MS        500
+#define STATUS_DELAY_MS        1000
+
+#define MODE_STOPPED           0
+#define MODE_WAITING_RELEASE   1
+#define MODE_MANUAL            2
+#define MODE_AUTO              3
 
 typedef enum {
     IDLE_OPEN,
@@ -51,110 +57,83 @@ typedef enum {
     CLOSING,
     STOPPED_MIDWAY,
     REVERSING
-} GateState;
+} states;
 
 typedef enum {
-    NO_DIRECTION,
-    OPEN_DIRECTION,
-    CLOSE_DIRECTION
-} GateDirection;
+    BTN_DRIVER_OPEN,
+    BTN_DRIVER_CLOSE,
+    BTN_SECURITY_OPEN,
+    BTN_SECURITY_CLOSE,
+    BTN_LIMIT_OPEN,
+    BTN_LIMIT_CLOSED,
+    BTN_OBSTACLE,
+    BTN_RELEASED,
+    BTN_CONFLICT,
+    BTN_HOLD_TIMEOUT
+} ButtonEvents;
 
 typedef enum {
-    NO_SOURCE,
-    DRIVER_SOURCE,
-    SECURITY_SOURCE
-} CommandSource;
+    RED_LED,
+    GREEN_LED,
+    OFF_LED
+} LEDSEvents;
 
-typedef enum {
-    MODE_STOPPED,
-    MODE_WAITING_RELEASE,
-    MODE_MANUAL,
-    MODE_AUTO
-} ControlMode;
-
-typedef enum {
-    EVENT_BUTTONS,
-    EVENT_OPEN_LIMIT,
-    EVENT_CLOSED_LIMIT,
-    EVENT_HOLD_TIMEOUT,
-    EVENT_OBSTACLE
-} EventType;
-
-typedef enum {
-    LED_OFF,
-    LED_GREEN,
-    LED_RED
-} LedCommand;
-
-typedef struct {
-    CommandSource source;
-    GateDirection direction;
-    bool conflict;
-} ButtonCommand;
-
-typedef struct {
-    EventType type;
-    uint8_t pressedButtons;
-    uint8_t changedButtons;
-} GateEvent;
-
-typedef struct {
-    bool active;
-    uint8_t pressedButtons;
-} ObstacleEvent;
-
-static QueueHandle_t buttonQueue;
-static QueueHandle_t ledQueue;
+static QueueHandle_t buttonsQueue;
+static QueueHandle_t ledsQueue;
 static QueueHandle_t obstacleQueue;
 
 static SemaphoreHandle_t openLimitSemaphore;
 static SemaphoreHandle_t closedLimitSemaphore;
 static SemaphoreHandle_t stateMutex;
 
-static GateState currentState = IDLE_CLOSED;
+static states currentState = IDLE_CLOSED;
 
-static void inputTask(void *pvParameters);
-static void gateControlTask(void *pvParameters);
-static void ledTask(void *pvParameters);
-static void safetyTask(void *pvParameters);
-static void statusTask(void *pvParameters);
+static void vInputTask(void *pvParameters);
+static void vGateCTRLTask(void *pvParameters);
+static void vLEDCTRLTask(void *pvParameters);
+static void vSafetyTask(void *pvParameters);
+static void vStatusTask(void *pvParameters);
 
-static void hardwareInit(void);
+static void GPIO_Init(void);
 static uint8_t readButtons(void);
-static ButtonCommand getButtonCommand(uint8_t buttons);
-static void sendGateEvent(EventType type, uint8_t buttons, uint8_t changed, BaseType_t urgent);
-static void setGateState(GateState newState);
-static GateState getGateState(void);
-static void sendLedCommand(LedCommand command);
-static void startGate(GateDirection direction);
-static void stopGate(GateState stopState);
-static const char *stateToString(GateState state);
+static ButtonEvents getPanelEvent(uint8_t buttons);
+static bool isMoveButton(ButtonEvents event);
+static bool isOpenButton(ButtonEvents event);
+static bool isCloseButton(ButtonEvents event);
+static void sendButtonEvent(ButtonEvents event, BaseType_t urgent);
+static void setState(states newState);
+static states getState(void);
+static void sendLedEvent(LEDSEvents event);
+static void startOpening(void);
+static void startClosing(void);
+static void stopGate(states stopState);
+static const char *stateName(states state);
 
 int main(void)
 {
-    hardwareInit();
+    GPIO_Init();
 
-    buttonQueue = xQueueCreate(20, sizeof(GateEvent));
-    ledQueue = xQueueCreate(8, sizeof(LedCommand));
-    obstacleQueue = xQueueCreate(4, sizeof(ObstacleEvent));
+    buttonsQueue = xQueueCreate(20, sizeof(ButtonEvents));
+    ledsQueue = xQueueCreate(8, sizeof(LEDSEvents));
+    obstacleQueue = xQueueCreate(4, sizeof(ButtonEvents));
 
     openLimitSemaphore = xSemaphoreCreateBinary();
     closedLimitSemaphore = xSemaphoreCreateBinary();
     stateMutex = xSemaphoreCreateMutex();
 
-    if (buttonQueue == NULL || ledQueue == NULL || obstacleQueue == NULL ||
+    if (buttonsQueue == NULL || ledsQueue == NULL || obstacleQueue == NULL ||
         openLimitSemaphore == NULL || closedLimitSemaphore == NULL || stateMutex == NULL) {
-        vPrintString("Failed to create RTOS objects\n");
+        vPrintString("RTOS objects failed\n");
         while (1) {
         }
     }
 
-    if (xTaskCreate(inputTask, "Input", 200, NULL, 4, NULL) != pdPASS ||
-        xTaskCreate(gateControlTask, "Gate", 220, NULL, 3, NULL) != pdPASS ||
-        xTaskCreate(ledTask, "LED", 160, NULL, 3, NULL) != pdPASS ||
-        xTaskCreate(safetyTask, "Safety", 180, NULL, 5, NULL) != pdPASS ||
-        xTaskCreate(statusTask, "Status", 160, NULL, 2, NULL) != pdPASS) {
-        vPrintString("Failed to create tasks\n");
+    if (xTaskCreate(vInputTask, "Input", 200, NULL, 4, NULL) != pdPASS ||
+        xTaskCreate(vGateCTRLTask, "Gate", 220, NULL, 3, NULL) != pdPASS ||
+        xTaskCreate(vLEDCTRLTask, "LED", 160, NULL, 3, NULL) != pdPASS ||
+        xTaskCreate(vSafetyTask, "Safety", 180, NULL, 5, NULL) != pdPASS ||
+        xTaskCreate(vStatusTask, "Status", 160, NULL, 2, NULL) != pdPASS) {
+        vPrintString("Task creation failed\n");
         while (1) {
         }
     }
@@ -165,97 +144,95 @@ int main(void)
     }
 }
 
-static void hardwareInit(void)
+static void GPIO_Init(void)
 {
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R1;  /* Enable Port B clock */
-    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R5;  /* Enable Port F clock */
+    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R1;  /* Port B clock */
+    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R5;  /* Port F clock */
 
     while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R1) == 0) {
     }
     while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R5) == 0) {
     }
 
-    GPIO_PORTB_DIR_R &= ~ALL_BUTTONS;   /* Port B pins are inputs */
-    GPIO_PORTB_DEN_R |= ALL_BUTTONS;    /* Digital enable */
-    GPIO_PORTB_PUR_R |= ALL_BUTTONS;    /* Pull-up because buttons are active low */
-    GPIO_PORTB_AFSEL_R &= ~ALL_BUTTONS;
-    GPIO_PORTB_AMSEL_R &= ~ALL_BUTTONS;
+    GPIO_PORTB_DIR_R &= ~ALL_BUTTONS_MASK;
+    GPIO_PORTB_DEN_R |= ALL_BUTTONS_MASK;
+    GPIO_PORTB_PUR_R |= ALL_BUTTONS_MASK;
+    GPIO_PORTB_AFSEL_R &= ~ALL_BUTTONS_MASK;
+    GPIO_PORTB_AMSEL_R &= ~ALL_BUTTONS_MASK;
 
-    GPIO_PORTF_DIR_R |= BOTH_LEDS;      /* LED pins are outputs */
-    GPIO_PORTF_DEN_R |= BOTH_LEDS;
-    GPIO_PORTF_AFSEL_R &= ~BOTH_LEDS;
-    GPIO_PORTF_AMSEL_R &= ~BOTH_LEDS;
-    GPIO_PORTF_DATA_R &= ~BOTH_LEDS;
+    GPIO_PORTF_DIR_R |= BOTH_LEDS_MASK;
+    GPIO_PORTF_DEN_R |= BOTH_LEDS_MASK;
+    GPIO_PORTF_AFSEL_R &= ~BOTH_LEDS_MASK;
+    GPIO_PORTF_AMSEL_R &= ~BOTH_LEDS_MASK;
+    GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
 }
 
 static uint8_t readButtons(void)
 {
-    return (uint8_t)((~GPIO_PORTB_DATA_R) & ALL_BUTTONS);
+    return (uint8_t)((~GPIO_PORTB_DATA_R) & ALL_BUTTONS_MASK);
 }
 
-static ButtonCommand getButtonCommand(uint8_t buttons)
+static ButtonEvents getPanelEvent(uint8_t buttons)
 {
-    ButtonCommand command;
-
-    command.source = NO_SOURCE;
-    command.direction = NO_DIRECTION;
-    command.conflict = false;
-
     /* Security panel has priority over driver panel. */
-    if ((buttons & (SECURITY_OPEN | SECURITY_CLOSE)) != 0) {
-        command.source = SECURITY_SOURCE;
-
-        if ((buttons & SECURITY_OPEN) != 0 && (buttons & SECURITY_CLOSE) != 0) {
-            command.conflict = true;
-        } else if ((buttons & SECURITY_OPEN) != 0) {
-            command.direction = OPEN_DIRECTION;
-        } else {
-            command.direction = CLOSE_DIRECTION;
-        }
-
-        return command;
+    if ((buttons & SECURITY_OPEN_MASK) != 0 && (buttons & SECURITY_CLOSE_MASK) != 0) {
+        return BTN_CONFLICT;
+    }
+    if ((buttons & SECURITY_OPEN_MASK) != 0) {
+        return BTN_SECURITY_OPEN;
+    }
+    if ((buttons & SECURITY_CLOSE_MASK) != 0) {
+        return BTN_SECURITY_CLOSE;
     }
 
-    if ((buttons & (DRIVER_OPEN | DRIVER_CLOSE)) != 0) {
-        command.source = DRIVER_SOURCE;
-
-        if ((buttons & DRIVER_OPEN) != 0 && (buttons & DRIVER_CLOSE) != 0) {
-            command.conflict = true;
-        } else if ((buttons & DRIVER_OPEN) != 0) {
-            command.direction = OPEN_DIRECTION;
-        } else {
-            command.direction = CLOSE_DIRECTION;
-        }
+    if ((buttons & DRIVER_OPEN_MASK) != 0 && (buttons & DRIVER_CLOSE_MASK) != 0) {
+        return BTN_CONFLICT;
+    }
+    if ((buttons & DRIVER_OPEN_MASK) != 0) {
+        return BTN_DRIVER_OPEN;
+    }
+    if ((buttons & DRIVER_CLOSE_MASK) != 0) {
+        return BTN_DRIVER_CLOSE;
     }
 
-    return command;
+    return BTN_RELEASED;
 }
 
-static void sendGateEvent(EventType type, uint8_t buttons, uint8_t changed, BaseType_t urgent)
+static bool isMoveButton(ButtonEvents event)
 {
-    GateEvent event;
+    return event == BTN_DRIVER_OPEN || event == BTN_DRIVER_CLOSE ||
+           event == BTN_SECURITY_OPEN || event == BTN_SECURITY_CLOSE;
+}
 
-    event.type = type;
-    event.pressedButtons = buttons;
-    event.changedButtons = changed;
+static bool isOpenButton(ButtonEvents event)
+{
+    return event == BTN_DRIVER_OPEN || event == BTN_SECURITY_OPEN;
+}
 
+static bool isCloseButton(ButtonEvents event)
+{
+    return event == BTN_DRIVER_CLOSE || event == BTN_SECURITY_CLOSE;
+}
+
+static void sendButtonEvent(ButtonEvents event, BaseType_t urgent)
+{
     if (urgent == pdTRUE) {
-        xQueueSendToFront(buttonQueue, &event, portMAX_DELAY);
+        xQueueSendToFront(buttonsQueue, &event, portMAX_DELAY);
     } else {
-        xQueueSendToBack(buttonQueue, &event, portMAX_DELAY);
+        xQueueSendToBack(buttonsQueue, &event, portMAX_DELAY);
     }
 }
 
-static void setGateState(GateState newState)
+static void setState(states newState)
 {
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     currentState = newState;
     xSemaphoreGive(stateMutex);
 }
 
-static GateState getGateState(void)
+static states getState(void)
 {
-    GateState state;
+    states state;
 
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     state = currentState;
@@ -264,32 +241,33 @@ static GateState getGateState(void)
     return state;
 }
 
-static void sendLedCommand(LedCommand command)
+static void sendLedEvent(LEDSEvents event)
 {
-    xQueueSendToBack(ledQueue, &command, portMAX_DELAY);
+    xQueueSendToBack(ledsQueue, &event, portMAX_DELAY);
 }
 
-static void startGate(GateDirection direction)
+static void startOpening(void)
 {
-    if (direction == OPEN_DIRECTION) {
-        setGateState(OPENING);
-        sendLedCommand(LED_GREEN);
-        vPrintString("Gate opening\n");
-    } else if (direction == CLOSE_DIRECTION) {
-        setGateState(CLOSING);
-        sendLedCommand(LED_RED);
-        vPrintString("Gate closing\n");
-    }
+    setState(OPENING);
+    sendLedEvent(GREEN_LED);
+    vPrintString("Gate opening\n");
 }
 
-static void stopGate(GateState stopState)
+static void startClosing(void)
 {
-    setGateState(stopState);
-    sendLedCommand(LED_OFF);
+    setState(CLOSING);
+    sendLedEvent(RED_LED);
+    vPrintString("Gate closing\n");
+}
+
+static void stopGate(states stopState)
+{
+    setState(stopState);
+    sendLedEvent(OFF_LED);
     vPrintString("Gate stopped\n");
 }
 
-static const char *stateToString(GateState state)
+static const char *stateName(states state)
 {
     switch (state) {
         case IDLE_OPEN:
@@ -309,22 +287,21 @@ static const char *stateToString(GateState state)
     }
 }
 
-static void inputTask(void *pvParameters)
+static void vInputTask(void *pvParameters)
 {
-    uint8_t stableButtons;
-    uint8_t lastSample;
+    uint8_t stableButtons = readButtons();
+    uint8_t lastSample = stableButtons;
     uint8_t sample;
-    uint8_t debounceCounter = 0;
     uint8_t changedButtons;
-    TickType_t pressStartTime = 0;
+    uint8_t debounceCounter = 0;
+    ButtonEvents panelEvent = getPanelEvent(stableButtons);
+    ButtonEvents obstacleEvent = BTN_OBSTACLE;
+    TickType_t pressStartTime = xTaskGetTickCount();
     bool holdEventSent = false;
-    ButtonCommand command;
 
     (void)pvParameters;
 
-    stableButtons = readButtons();
-    lastSample = stableButtons;
-    sendGateEvent(EVENT_BUTTONS, stableButtons, stableButtons, pdFALSE);
+    sendButtonEvent(panelEvent, pdFALSE);
 
     while (1) {
         sample = readButtons();
@@ -342,40 +319,38 @@ static void inputTask(void *pvParameters)
             changedButtons = stableButtons ^ sample;
             stableButtons = sample;
 
-            sendGateEvent(EVENT_BUTTONS, stableButtons, changedButtons, pdFALSE);
+            if ((changedButtons & PANEL_BUTTONS_MASK) != 0) {
+                panelEvent = getPanelEvent(stableButtons);
+                sendButtonEvent(panelEvent, pdFALSE);
+                pressStartTime = xTaskGetTickCount();
+                holdEventSent = false;
+            }
 
-            if ((changedButtons & OPEN_LIMIT) != 0 && (stableButtons & OPEN_LIMIT) != 0) {
+            if ((changedButtons & OPEN_LIMIT_MASK) != 0 && (stableButtons & OPEN_LIMIT_MASK) != 0) {
                 xSemaphoreGive(openLimitSemaphore);
-                sendGateEvent(EVENT_OPEN_LIMIT, stableButtons, changedButtons, pdTRUE);
+                sendButtonEvent(BTN_LIMIT_OPEN, pdTRUE);
             }
 
-            if ((changedButtons & CLOSED_LIMIT) != 0 && (stableButtons & CLOSED_LIMIT) != 0) {
+            if ((changedButtons & CLOSED_LIMIT_MASK) != 0 && (stableButtons & CLOSED_LIMIT_MASK) != 0) {
                 xSemaphoreGive(closedLimitSemaphore);
-                sendGateEvent(EVENT_CLOSED_LIMIT, stableButtons, changedButtons, pdTRUE);
+                sendButtonEvent(BTN_LIMIT_CLOSED, pdTRUE);
             }
 
-            if ((changedButtons & OBSTACLE) != 0) {
-                ObstacleEvent obstacleEvent;
-
-                obstacleEvent.active = ((stableButtons & OBSTACLE) != 0);
-                obstacleEvent.pressedButtons = stableButtons;
+            if ((changedButtons & OBSTACLE_MASK) != 0 && (stableButtons & OBSTACLE_MASK) != 0) {
                 xQueueSendToBack(obstacleQueue, &obstacleEvent, portMAX_DELAY);
             }
-
-            pressStartTime = xTaskGetTickCount();
-            holdEventSent = false;
         }
 
-        command = getButtonCommand(stableButtons);
+        panelEvent = getPanelEvent(stableButtons);
 
-        if (command.direction != NO_DIRECTION && command.conflict == false && holdEventSent == false) {
+        if (isMoveButton(panelEvent) && holdEventSent == false) {
             if ((xTaskGetTickCount() - pressStartTime) >= pdMS_TO_TICKS(HOLD_TIME_MS)) {
-                sendGateEvent(EVENT_HOLD_TIMEOUT, stableButtons, 0, pdFALSE);
+                sendButtonEvent(BTN_HOLD_TIMEOUT, pdFALSE);
                 holdEventSent = true;
             }
         }
 
-        if (command.direction == NO_DIRECTION || command.conflict == true) {
+        if (panelEvent == BTN_RELEASED || panelEvent == BTN_CONFLICT) {
             holdEventSent = false;
         }
 
@@ -383,153 +358,170 @@ static void inputTask(void *pvParameters)
     }
 }
 
-static void gateControlTask(void *pvParameters)
+static void vGateCTRLTask(void *pvParameters)
 {
-    GateEvent event;
-    ButtonCommand command;
-    ControlMode mode = MODE_STOPPED;
-    CommandSource activeSource = NO_SOURCE;
-    GateDirection activeDirection = NO_DIRECTION;
-    uint8_t blockedButtons = 0;
-    uint8_t usefulButtons;
+    ButtonEvents event;
+    ButtonEvents activeButton = BTN_RELEASED;
+    int gateMode = MODE_STOPPED;
+    bool ignoreCommandsUntilRelease = false;
 
     (void)pvParameters;
 
     while (1) {
-        xQueueReceive(buttonQueue, &event, portMAX_DELAY);
+        xQueueReceive(buttonsQueue, &event, portMAX_DELAY);
 
-        blockedButtons &= event.pressedButtons;
-        usefulButtons = event.pressedButtons & (uint8_t)(~blockedButtons);
+        if (event == BTN_RELEASED) {
+            ignoreCommandsUntilRelease = false;
 
-        if (event.type == EVENT_OPEN_LIMIT) {
-            if (xSemaphoreTake(openLimitSemaphore, 0) == pdTRUE) {
-                if (getGateState() == OPENING || getGateState() == REVERSING) {
-                    stopGate(IDLE_OPEN);
-                    mode = MODE_STOPPED;
-                    activeSource = NO_SOURCE;
-                    activeDirection = NO_DIRECTION;
-                }
-            }
-        } else if (event.type == EVENT_CLOSED_LIMIT) {
-            if (xSemaphoreTake(closedLimitSemaphore, 0) == pdTRUE) {
-                if (getGateState() == CLOSING) {
-                    stopGate(IDLE_CLOSED);
-                    mode = MODE_STOPPED;
-                    activeSource = NO_SOURCE;
-                    activeDirection = NO_DIRECTION;
-                }
-            }
-        } else if (event.type == EVENT_OBSTACLE) {
-            if (getGateState() == CLOSING) {
-                vPrintString("Obstacle detected\n");
-
-                blockedButtons |= (event.pressedButtons & PANEL_BUTTONS);
-                mode = MODE_STOPPED;
-                activeSource = NO_SOURCE;
-                activeDirection = NO_DIRECTION;
-
+            if (gateMode == MODE_WAITING_RELEASE) {
+                gateMode = MODE_AUTO;
+                vPrintString("Auto mode\n");
+            } else if (gateMode == MODE_MANUAL) {
                 stopGate(STOPPED_MIDWAY);
-                setGateState(REVERSING);
-                sendLedCommand(LED_GREEN);
-                vTaskDelay(pdMS_TO_TICKS(REVERSE_TIME_MS));
-                stopGate(STOPPED_MIDWAY);
+                gateMode = MODE_STOPPED;
             }
-        } else if (event.type == EVENT_HOLD_TIMEOUT) {
-            command = getButtonCommand(usefulButtons);
 
-            if (mode == MODE_WAITING_RELEASE &&
-                command.source == activeSource &&
-                command.direction == activeDirection &&
-                command.conflict == false) {
-                mode = MODE_MANUAL;
-                vPrintString("Manual mode\n");
-            }
-        } else {
-            command = getButtonCommand(usefulButtons);
+            continue;
+        }
 
-            if (command.conflict == true) {
-                stopGate(STOPPED_MIDWAY);
-                mode = MODE_STOPPED;
-                activeSource = NO_SOURCE;
-                activeDirection = NO_DIRECTION;
-            } else if (command.direction == NO_DIRECTION) {
-                if (mode == MODE_WAITING_RELEASE) {
-                    mode = MODE_AUTO;
-                    vPrintString("Auto mode\n");
-                } else if (mode == MODE_MANUAL) {
-                    stopGate(STOPPED_MIDWAY);
-                    mode = MODE_STOPPED;
-                    activeSource = NO_SOURCE;
-                    activeDirection = NO_DIRECTION;
-                }
-            } else {
-                if (mode == MODE_STOPPED ||
-                    mode == MODE_AUTO ||
-                    command.source != activeSource ||
-                    command.direction != activeDirection) {
+        if (ignoreCommandsUntilRelease == true &&
+            event != BTN_LIMIT_OPEN &&
+            event != BTN_LIMIT_CLOSED &&
+            event != BTN_OBSTACLE) {
+            continue;
+        }
 
-                    if (command.direction == OPEN_DIRECTION && getGateState() == IDLE_OPEN) {
+        switch (event) {
+            case BTN_LIMIT_OPEN:
+                if (xSemaphoreTake(openLimitSemaphore, 0) == pdTRUE) {
+                    if (getState() == OPENING || getState() == REVERSING) {
                         stopGate(IDLE_OPEN);
-                        mode = MODE_STOPPED;
-                    } else if (command.direction == CLOSE_DIRECTION && getGateState() == IDLE_CLOSED) {
-                        stopGate(IDLE_CLOSED);
-                        mode = MODE_STOPPED;
-                    } else {
-                        activeSource = command.source;
-                        activeDirection = command.direction;
-                        mode = MODE_WAITING_RELEASE;
-                        startGate(command.direction);
+                        gateMode = MODE_STOPPED;
+                        activeButton = BTN_RELEASED;
                     }
                 }
-            }
+                break;
+
+            case BTN_LIMIT_CLOSED:
+                if (xSemaphoreTake(closedLimitSemaphore, 0) == pdTRUE) {
+                    if (getState() == CLOSING) {
+                        stopGate(IDLE_CLOSED);
+                        gateMode = MODE_STOPPED;
+                        activeButton = BTN_RELEASED;
+                    }
+                }
+                break;
+
+            case BTN_OBSTACLE:
+                if (getState() == CLOSING) {
+                    vPrintString("Obstacle detected\n");
+
+                    ignoreCommandsUntilRelease = true;
+                    gateMode = MODE_STOPPED;
+                    activeButton = BTN_RELEASED;
+
+                    stopGate(STOPPED_MIDWAY);
+                    setState(REVERSING);
+                    sendLedEvent(GREEN_LED);
+                    vTaskDelay(pdMS_TO_TICKS(REVERSE_TIME_MS));
+                    stopGate(STOPPED_MIDWAY);
+                }
+                break;
+
+            case BTN_HOLD_TIMEOUT:
+                if (gateMode == MODE_WAITING_RELEASE && activeButton != BTN_RELEASED) {
+                    gateMode = MODE_MANUAL;
+                    vPrintString("Manual mode\n");
+                }
+                break;
+
+            case BTN_CONFLICT:
+                stopGate(STOPPED_MIDWAY);
+                gateMode = MODE_STOPPED;
+                activeButton = BTN_RELEASED;
+                break;
+
+            case BTN_DRIVER_OPEN:
+            case BTN_SECURITY_OPEN:
+                if (getState() == IDLE_OPEN) {
+                    stopGate(IDLE_OPEN);
+                    gateMode = MODE_STOPPED;
+                } else {
+                    activeButton = event;
+                    gateMode = MODE_WAITING_RELEASE;
+                    startOpening();
+                }
+                break;
+
+            case BTN_DRIVER_CLOSE:
+            case BTN_SECURITY_CLOSE:
+                if (getState() == IDLE_CLOSED) {
+                    stopGate(IDLE_CLOSED);
+                    gateMode = MODE_STOPPED;
+                } else {
+                    activeButton = event;
+                    gateMode = MODE_WAITING_RELEASE;
+                    startClosing();
+                }
+                break;
+
+            default:
+                break;
         }
     }
 }
 
-static void ledTask(void *pvParameters)
+static void vLEDCTRLTask(void *pvParameters)
 {
-    LedCommand command;
+    LEDSEvents ledEvent;
 
     (void)pvParameters;
 
     while (1) {
-        xQueueReceive(ledQueue, &command, portMAX_DELAY);
+        xQueueReceive(ledsQueue, &ledEvent, portMAX_DELAY);
 
-        if (command == LED_GREEN) {
-            GPIO_PORTF_DATA_R &= ~BOTH_LEDS;
-            GPIO_PORTF_DATA_R |= GREEN_LED;
-        } else if (command == LED_RED) {
-            GPIO_PORTF_DATA_R &= ~BOTH_LEDS;
-            GPIO_PORTF_DATA_R |= RED_LED;
-        } else {
-            GPIO_PORTF_DATA_R &= ~BOTH_LEDS;
+        switch (ledEvent) {
+            case GREEN_LED:
+                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
+                GPIO_PORTF_DATA_R |= GREEN_LED_MASK;
+                break;
+
+            case RED_LED:
+                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
+                GPIO_PORTF_DATA_R |= RED_LED_MASK;
+                break;
+
+            case OFF_LED:
+            default:
+                GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
+                break;
         }
     }
 }
 
-static void safetyTask(void *pvParameters)
+static void vSafetyTask(void *pvParameters)
 {
-    ObstacleEvent obstacleEvent;
+    ButtonEvents obstacleEvent;
 
     (void)pvParameters;
 
     while (1) {
         xQueueReceive(obstacleQueue, &obstacleEvent, portMAX_DELAY);
 
-        if (obstacleEvent.active == true && getGateState() == CLOSING) {
-            sendGateEvent(EVENT_OBSTACLE, obstacleEvent.pressedButtons, OBSTACLE, pdTRUE);
+        if (obstacleEvent == BTN_OBSTACLE && getState() == CLOSING) {
+            sendButtonEvent(BTN_OBSTACLE, pdTRUE);
         }
     }
 }
 
-static void statusTask(void *pvParameters)
+static void vStatusTask(void *pvParameters)
 {
     (void)pvParameters;
 
     while (1) {
         vPrintString("State: ");
-        vPrintString(stateToString(getGateState()));
+        vPrintString(stateName(getState()));
         vPrintString("\n");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(STATUS_DELAY_MS));
     }
 }
