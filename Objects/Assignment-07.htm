@@ -3,7 +3,7 @@
 <title>Static Call Graph - [.\Objects\Assignment-07.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image .\Objects\Assignment-07.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6190004: Last Updated: Sat Apr 25 14:47:42 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6190004: Last Updated: Sat Apr 25 16:48:34 2026
 <BR><P>
 <H3>Maximum Stack Usage =        324 bytes + Unknown(Functions without stacksize, Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -2529,8 +2529,10 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[ea]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__write
 </UL>
 
-<P><STRONG><a name="[f6]"></a>GPIO_Init</STRONG> (Thumb, 230 bytes, Stack size 0 bytes, main.o(.text.GPIO_Init))
-<BR><BR>[Called By]<UL><LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;main
+<P><STRONG><a name="[f6]"></a>GPIO_Init</STRONG> (Thumb, 480 bytes, Stack size 4 bytes, main.o(.text.GPIO_Init))
+<BR><BR>[Stack]<UL><LI>Max Depth = 4<LI>Call Chain = GPIO_Init
+</UL>
+<BR>[Called By]<UL><LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;main
 </UL>
 
 <P><STRONG><a name="[7b]"></a>vInputTask</STRONG> (Thumb, 492 bytes, Stack size 40 bytes, main.o(.text.vInputTask))
@@ -2590,8 +2592,10 @@ Local Symbols
 </UL>
 <BR>[Address Reference Count : 1]<UL><LI> main.o(.text.main)
 </UL>
-<P><STRONG><a name="[133]"></a>readButtons</STRONG> (Thumb, 16 bytes, Stack size 0 bytes, main.o(.text.readButtons))
-<BR><BR>[Called By]<UL><LI><a href="#[7b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;vInputTask
+<P><STRONG><a name="[133]"></a>readButtons</STRONG> (Thumb, 234 bytes, Stack size 4 bytes, main.o(.text.readButtons))
+<BR><BR>[Stack]<UL><LI>Max Depth = 4<LI>Call Chain = readButtons
+</UL>
+<BR>[Called By]<UL><LI><a href="#[7b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;vInputTask
 </UL>
 
 <P><STRONG><a name="[134]"></a>getPanelEvent</STRONG> (Thumb, 162 bytes, Stack size 4 bytes, main.o(.text.getPanelEvent))

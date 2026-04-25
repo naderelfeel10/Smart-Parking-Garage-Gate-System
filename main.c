@@ -11,18 +11,26 @@
  * Smart Parking Garage Gate System
  *
  * Button connections, active low:
- * PB0 = Driver OPEN
- * PB1 = Driver CLOSE
- * PB2 = Security OPEN
- * PB3 = Security CLOSE
- * PB4 = Open limit
- * PB5 = Closed limit
- * PB6 = Obstacle
+ * PF4 = Driver OPEN
+ * PE0 = Driver CLOSE
+ * PE1 = Security OPEN
+ * PB0 = Security CLOSE
+ * PB1 = Open limit
+ * PD0 = Closed limit
+ * PD1 = Obstacle
  *
  * LEDs:
  * PF3 = Green LED, gate opening
  * PF1 = Red LED, gate closing
  */
+
+#define BTN_PF4                (1U << 4)
+#define BTN_PE0                (1U << 0)
+#define BTN_PE1                (1U << 1)
+#define BTN_PB0                (1U << 0)
+#define BTN_PB1                (1U << 1)
+#define BTN_PD0                (1U << 0)
+#define BTN_PD1                (1U << 1)
 
 #define DRIVER_OPEN_MASK       0x01
 #define DRIVER_CLOSE_MASK      0x02
@@ -147,29 +155,73 @@ int main(void)
 static void GPIO_Init(void)
 {
     SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R1;  /* Port B clock */
+    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R3;  /* Port D clock */
+    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R4;  /* Port E clock */
     SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R5;  /* Port F clock */
 
     while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R1) == 0) {
     }
+    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R3) == 0) {
+    }
+    while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R4) == 0) {
+    }
     while ((SYSCTL_PRGPIO_R & SYSCTL_PRGPIO_R5) == 0) {
     }
 
-    GPIO_PORTB_DIR_R &= ~ALL_BUTTONS_MASK;
-    GPIO_PORTB_DEN_R |= ALL_BUTTONS_MASK;
-    GPIO_PORTB_PUR_R |= ALL_BUTTONS_MASK;
-    GPIO_PORTB_AFSEL_R &= ~ALL_BUTTONS_MASK;
-    GPIO_PORTB_AMSEL_R &= ~ALL_BUTTONS_MASK;
+    GPIO_PORTB_DIR_R &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_DEN_R |= (BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_PUR_R |= (BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_AFSEL_R &= ~(BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_AMSEL_R &= ~(BTN_PB0 | BTN_PB1);
+
+    GPIO_PORTD_DIR_R &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_DEN_R |= (BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_PUR_R |= (BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_AFSEL_R &= ~(BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_AMSEL_R &= ~(BTN_PD0 | BTN_PD1);
+
+    GPIO_PORTE_DIR_R &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_DEN_R |= (BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_PUR_R |= (BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_AFSEL_R &= ~(BTN_PE0 | BTN_PE1);
+    GPIO_PORTE_AMSEL_R &= ~(BTN_PE0 | BTN_PE1);
 
     GPIO_PORTF_DIR_R |= BOTH_LEDS_MASK;
-    GPIO_PORTF_DEN_R |= BOTH_LEDS_MASK;
-    GPIO_PORTF_AFSEL_R &= ~BOTH_LEDS_MASK;
-    GPIO_PORTF_AMSEL_R &= ~BOTH_LEDS_MASK;
+    GPIO_PORTF_DIR_R &= ~BTN_PF4;
+    GPIO_PORTF_DEN_R |= (BOTH_LEDS_MASK | BTN_PF4);
+    GPIO_PORTF_PUR_R |= BTN_PF4;
+    GPIO_PORTF_AFSEL_R &= ~(BOTH_LEDS_MASK | BTN_PF4);
+    GPIO_PORTF_AMSEL_R &= ~(BOTH_LEDS_MASK | BTN_PF4);
     GPIO_PORTF_DATA_R &= ~BOTH_LEDS_MASK;
 }
 
 static uint8_t readButtons(void)
 {
-    return (uint8_t)((~GPIO_PORTB_DATA_R) & ALL_BUTTONS_MASK);
+    uint8_t buttons = 0;
+
+    if ((GPIO_PORTF_DATA_R & BTN_PF4) == 0) {
+        buttons |= DRIVER_OPEN_MASK;
+    }
+    if ((GPIO_PORTE_DATA_R & BTN_PE0) == 0) {
+        buttons |= DRIVER_CLOSE_MASK;
+    }
+    if ((GPIO_PORTE_DATA_R & BTN_PE1) == 0) {
+        buttons |= SECURITY_OPEN_MASK;
+    }
+    if ((GPIO_PORTB_DATA_R & BTN_PB0) == 0) {
+        buttons |= SECURITY_CLOSE_MASK;
+    }
+    if ((GPIO_PORTB_DATA_R & BTN_PB1) == 0) {
+        buttons |= OPEN_LIMIT_MASK;
+    }
+    if ((GPIO_PORTD_DATA_R & BTN_PD0) == 0) {
+        buttons |= CLOSED_LIMIT_MASK;
+    }
+    if ((GPIO_PORTD_DATA_R & BTN_PD1) == 0) {
+        buttons |= OBSTACLE_MASK;
+    }
+
+    return buttons;
 }
 
 static ButtonEvents getPanelEvent(uint8_t buttons)
