@@ -54,8 +54,8 @@
 #define GREEN_LED_MASK         0x08
 #define BOTH_LEDS_MASK         (RED_LED_MASK | GREEN_LED_MASK)
 
-#define DEBOUNCE_COUNT         3
-#define INPUT_DELAY_MS         20
+#define DEBOUNCE_COUNT         2
+#define INPUT_DELAY_MS         10
 #define HOLD_TIME_MS           300
 #define REVERSE_TIME_MS        500
 #define STATUS_DELAY_MS        1000
