@@ -10,7 +10,7 @@
 /*
  * Smart Parking Garage Gate System
  *
- * Button connections using main(4) hardware wiring:
+ * Button connections -hardware wiring:
  * PF4 = Driver OPEN      pull-up,   active-low  (pressed = 0)
  * PE0 = Driver CLOSE     pull-down, active-high (pressed = 1)
  * PE1 = Security OPEN    pull-down, active-high (pressed = 1)
